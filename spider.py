@@ -14,7 +14,6 @@ class Spider(object):
     @property
     def is_logged_in(self):
         # todo
-
         raise NotImplementedError()
 
     def _request(self, method, url, **kwargs):
@@ -52,22 +51,30 @@ class Spider(object):
 
 
 class TouTiaoSpider(Spider):
+    def check_resp(self, data):
+        if data["status"] != "success":
+            print(data)
+            raise requests.RequestException("Invalid response status")
+
     def get_over_view(self):
         resp = self.get("https://ad.toutiao.com/overture/data/overview/",
                         headers={"Accept": "application/json, text/javascript, */*; q=0.01",
                                  "Referer": "https://ad.toutiao.com/overture/data/campaign/ad/"})
         data = resp.json()
-        if data["status"] != "success":
-            print(data)
-            raise requests.RequestException("Invalid response status")
-        return resp.json()["data"]
-    def get_ad_info(self, page, today_date, timestamp):
-        url = "https://ad.toutiao.com/overture/data/ad_stat/?page=" + page + "&st=" + today_date + "&et=" + today_date + "&landing_type=0&status=no_delete&pricing=0&search_type=2&keyword=&sort_stat=&sort_order=1&_=" + timestamp
-        resp = self.get(url,
-                        headers={"Accept": "application/json, text/javascript, */*; q=0.01",
-                                 "Referer": "https://ad.toutiao.com/overture/data/advertiser/ad/"})
+        self.check_resp(data)
+        return data["data"]
+
+    def get_ad_info(self, today_date):
+        url = "https://ad.toutiao.com/overture/data/ad_stat/?page=1&st=" + \
+              today_date + "&et=" + today_date + \
+              "&landing_type=0&status=no_delete&pricing=0&search_type=2&keyword=&sort_stat=&sort_order=1&limit=1000"
+        resp = self.get(url, headers={"Accept": "application/json, text/javascript, */*; q=0.01",
+                                      "Referer": "https://ad.toutiao.com/overture/data/advertiser/ad/"})
+
         data = resp.json()
+        self.check_resp(data)
         return data
+
 
 class YouYuanSpider(Spider):
     def get_channel_info(self, channel_id):
@@ -77,62 +84,42 @@ class YouYuanSpider(Spider):
                                   "Referer": "http://3.youyuan.com/sem/list"})
         html = resp.text.replace(" ", "").replace("\r\n", "").replace("\t", "")
         regex = r"<tbody><tr><td>([0-9\-]+)</td><td>(\d+)</td><td>([0-9\.\-]+)</td><td>(\d+)</td><td>([0-9\.]+)</td><td>(\d+)</td><td>(\d+)</td></tr></tbody>"
-        # regex = r"<tbody><tr><td>([0-9\-]+)</td><td>([0-9\.\-])</td><td>(\d+)</td><td>(\d+)</td><td>([0-9\.]+)</td><td>(\d+)</td><td>(\d+)</td></tr></tbody>"
         return re.compile(regex).findall(html)
 
 
 if __name__ == "__main__":
     from config import *
+    you_yuan = YouYuanSpider(you_yuan_cookie)
     tou_tiao = TouTiaoSpider(tou_tiao_cookies[0])
-    over_view = tou_tiao.get_over_view()
 
-    channel_id_list = set()
-    campaign_id_to_channel_id = {}
+    channel_cost = {}
 
-    for item in over_view["campaign_ads"]:
-        campaign_id = item["campaign_id"]
-        for ad in item["ads"]:
-            try:
-                channel_id_list.add(int(ad["ad_name"].split("-")[0]))
-                campaign_id_to_channel_id[campaign_id] = int(ad["ad_name"].split("-")[0])
-            except Exception as e:
-                print(e, "invalid channel id", ad)
-                exit(1)
+    ad_info = tou_tiao.get_ad_info(today_date=time.strftime("%Y-%m-%d", time.localtime()))
+    ad_data = ad_info["data"]["table"]["ad_data"]
 
-    channel_id_to_toutiao_cost = {}
+    for item in ad_data:
+        try:
+            channel_id = item["ad_name"].split("-")[0]
+        except ValueError:
+            print("Invalid channel id", item["ad_name"])
+            exit(1)
+        cost = float(item["stat_data"]["stat_cost"])
+        if channel_id in channel_cost :
+            channel_cost[channel_id] = channel_cost[channel_id] + cost
+        else:
+            channel_cost[channel_id] = cost
 
-    for i in range(1, 100) :
-        ad_info = tou_tiao.get_ad_info(page=str(i), today_date=str(time.strftime("%Y-%m-%d", time.localtime())), timestamp=str(time.time()))
-        pagination = ad_info['data']['table']['pagination']
-        ad_data = ad_info['data']['table']['ad_data']
+    print("channel,", "arpu,", "reg_num,", "cost,", "roi")
+    for key, cost in channel_cost.items():
+        channel_data = you_yuan.get_channel_info(key)
 
-        for item in ad_data :
-            channel_id = item['ad_name'].split("-")[0]
-            cost = float(item['stat_data']['stat_cost'])
-            if channel_id_to_toutiao_cost.has_key(channel_id) :
-                channel_id_to_toutiao_cost[channel_id] = channel_id_to_toutiao_cost[channel_id] + cost
-            elif cost > 0.0:
-                channel_id_to_toutiao_cost[channel_id] = cost
-
-        if pagination['has_more'] == False:
-            break
-
-    print channel_id_to_toutiao_cost
-
-    for key in channel_id_to_toutiao_cost :
-        tou_tiao_cost = channel_id_to_toutiao_cost[key]
-        channel_data = YouYuanSpider(you_yuan_cookie).get_channel_info(key)
-
-        if len(channel_data) != 0 :
-            regist_num = channel_data[0][3]
+        if channel_data:
+            reg_num = float(channel_data[0][3])
             arpu = channel_data[0][4]
-            roi = float(arpu) * 1.8 / (float(tou_tiao_cost) / float(regist_num))
-            print "======================================"
-            print "arpu : ", arpu
-            print "regist_num : ", regist_num
-            print "tou_tiao_cost : ", tou_tiao_cost
-            print "regist_num : ", regist_num
-            print key, roi
-            print "======================================"
+            if not (cost and reg_num):
+                roi = -1
+            else:
+                roi = float(arpu) * 1.8 / (cost / reg_num)
+            print(key, ",", arpu, ",", reg_num, ",", cost, ",", roi)
 
 
