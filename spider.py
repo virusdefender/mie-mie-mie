@@ -1,19 +1,19 @@
+# coding=utf-8
+from __future__ import print_function, unicode_literals
 import re
 import requests
 import time
 
 
-class RequestFailed(Exception):
-    pass
-
-
 class Spider(object):
     def __init__(self, cookies):
         self.cookies = cookies
+        if not self.is_logged_in:
+            print(self.__class__, "cookie is expired")
+            exit(1)
 
     @property
     def is_logged_in(self):
-        # todo
         raise NotImplementedError()
 
     def _request(self, method, url, **kwargs):
@@ -27,7 +27,8 @@ class Spider(object):
         common_headers = {"Accept-Encoding": "gzip, deflate",
                           "Accept-Language": "en-US,en;q=0.8,zh;q=0.6,zh-CN;q=0.4",
                           "Cache-Control": "no-cache",
-                          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"}
+                          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
+                          "Referer": url}
         for k, v in common_headers.items():
             if k not in kwargs["headers"]:
                 kwargs["headers"][k] = v
@@ -51,25 +52,25 @@ class Spider(object):
 
 
 class TouTiaoSpider(Spider):
+    @property
+    def is_logged_in(self):
+        try:
+            resp = self.get("https://ad.toutiao.com/overture/index/account_balance/")
+            self.check_resp(resp.json())
+            return True
+        except requests.RequestException:
+            return False
+
     def check_resp(self, data):
         if data["status"] != "success":
             print(data)
             raise requests.RequestException("Invalid response status")
 
-    def get_over_view(self):
-        resp = self.get("https://ad.toutiao.com/overture/data/overview/",
-                        headers={"Accept": "application/json, text/javascript, */*; q=0.01",
-                                 "Referer": "https://ad.toutiao.com/overture/data/campaign/ad/"})
-        data = resp.json()
-        self.check_resp(data)
-        return data["data"]
-
     def get_ad_info(self, today_date):
         url = "https://ad.toutiao.com/overture/data/ad_stat/?page=1&st=" + \
               today_date + "&et=" + today_date + \
               "&landing_type=0&status=no_delete&pricing=0&search_type=2&keyword=&sort_stat=&sort_order=1&limit=1000"
-        resp = self.get(url, headers={"Accept": "application/json, text/javascript, */*; q=0.01",
-                                      "Referer": "https://ad.toutiao.com/overture/data/advertiser/ad/"})
+        resp = self.get(url, headers={"Accept": "application/json, text/javascript, */*; q=0.01"})
 
         data = resp.json()
         self.check_resp(data)
@@ -77,11 +78,14 @@ class TouTiaoSpider(Spider):
 
 
 class YouYuanSpider(Spider):
+    @property
+    def is_logged_in(self):
+        resp = self.get("http://3.youyuan.com/index")
+        return "<title>系统登录</title>" not in resp.text
+
     def get_channel_info(self, channel_id):
         resp = self.post("http://3.youyuan.com/sem/list",
-                         data={"fromChannel": channel_id},
-                         headers={"Content-Type": "application/x-www-form-urlencoded",
-                                  "Referer": "http://3.youyuan.com/sem/list"})
+                         data={"fromChannel": channel_id})
         html = resp.text.replace(" ", "").replace("\r\n", "").replace("\t", "")
         regex = r"<tbody><tr><td>([0-9\-]+)</td><td>(\d+)</td><td>([0-9\.\-]+)</td><td>(\d+)</td><td>([0-9\.]+)</td><td>(\d+)</td><td>(\d+)</td></tr></tbody>"
         return re.compile(regex).findall(html)
@@ -121,5 +125,7 @@ if __name__ == "__main__":
             else:
                 roi = float(arpu) * 1.8 / (cost / reg_num)
             print(key, ",", arpu, ",", reg_num, ",", cost, ",", roi)
+        else:
+            print("get youyan channel", key, "failed, ignored")
 
 
