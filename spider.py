@@ -94,38 +94,40 @@ class YouYuanSpider(Spider):
 if __name__ == "__main__":
     from config import *
     you_yuan = YouYuanSpider(you_yuan_cookie)
-    tou_tiao = TouTiaoSpider(tou_tiao_cookies[0])
-
-    channel_cost = {}
-
-    ad_info = tou_tiao.get_ad_info(today_date=time.strftime("%Y-%m-%d", time.localtime()))
-    ad_data = ad_info["data"]["table"]["ad_data"]
-
-    for item in ad_data:
-        try:
-            channel_id = item["ad_name"].split("-")[0]
-        except ValueError:
-            print("Invalid channel id", item["ad_name"])
-            exit(1)
-        cost = float(item["stat_data"]["stat_cost"])
-        if channel_id in channel_cost :
-            channel_cost[channel_id] = channel_cost[channel_id] + cost
-        else:
-            channel_cost[channel_id] = cost
-
     print("channel,", "arpu,", "reg_num,", "cost,", "roi")
-    for key, cost in channel_cost.items():
-        channel_data = you_yuan.get_channel_info(key)
 
-        if channel_data:
-            reg_num = float(channel_data[0][3])
-            arpu = channel_data[0][4]
-            if not (cost and reg_num):
-                roi = -1
+    for cookie in tou_tiao_cookies:
+        tou_tiao = TouTiaoSpider(cookie)
+
+        channel_cost = {}
+
+        ad_info = tou_tiao.get_ad_info(today_date=time.strftime("%Y-%m-%d", time.localtime()))
+        ad_data = ad_info["data"]["table"]["ad_data"]
+
+        for item in ad_data:
+            try:
+                channel_id = item["ad_name"].split("-")[0]
+            except ValueError:
+                print("Invalid channel id", item["ad_name"])
+                exit(1)
+            cost = float(item["stat_data"]["stat_cost"])
+            if channel_id in channel_cost:
+                channel_cost[channel_id] += cost
             else:
-                roi = float(arpu) * 1.8 / (cost / reg_num)
-            print(key, ",", arpu, ",", reg_num, ",", cost, ",", roi)
-        else:
-            print("get youyan channel", key, "failed, ignored")
+                channel_cost[channel_id] = cost
+
+        for key, cost in channel_cost.items():
+            channel_data = you_yuan.get_channel_info(key)
+
+            if channel_data:
+                reg_num = float(channel_data[0][3])
+                arpu = channel_data[0][4]
+                if not (cost and reg_num):
+                    roi = -1
+                else:
+                    roi = float(arpu) * 1.8 / (cost / reg_num)
+                print(key, ",", arpu, ",", reg_num, ",", cost, ",", roi)
+            else:
+                print("get youyan channel", key, "failed, ignored")
 
 
